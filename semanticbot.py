@@ -12,8 +12,8 @@ import logging
 FORMAT = '%(asctime)-15s %(message)s'
 logging.basicConfig(level=logging.INFO, format=FORMAT)
 
-WIKI = 'localhost'
-API_PATH = '/mediawiki-1.18.2/'
+WIKI = 'hostname'
+API_PATH = '/wiki/'
 ACTIONS = ['push_properties', 'list_priorities', 'create_form']
 
 ID_HEADER = u'Property ID'
@@ -105,14 +105,14 @@ FORM_SINGLE = '! %(name)s: {{#info: %(tooltip)s}}\n'\
               '|-\n'
 FORM_MULTIPLE = '! %(name)s: {{#info: %(tooltip)s}}\n'\
                 '| {{{field|%(name)s|input type=%(ctrl)s%(mandatory)s'\
-                '%(size)s%(triggers)s}}}\n'\
+                '%(default)s%(size)s%(triggers)s}}}\n'\
                 '|-\n'
 FORM_DIV_SINGLE = '! %(name)s:\n'\
               '| {{{field|%(name)s%(mandatory)s%(triggers)s}}}\n'\
               '|-\n'
 FORM_DIV_MULTIPLE = '! %(name)s:\n'\
                 '| {{{field|%(name)s|input type=%(ctrl)s%(mandatory)s|'\
-                'size=%(size)s%(triggers)s}}}\n'\
+                '%(default)s%(size)s%(triggers)s}}}\n'\
                 '|-\n'
 FORM_CONDITIONAL = '<div id="%(id)s">\n{|\n%(field)s|}\n</div>\n'
 EXTRA_TOOLTIP = '+++%(name)s+++: \n%(tooltip)s\n\n'
@@ -152,7 +152,7 @@ class SemanticBot(object):
         Property = namedtuple('Property',
                               'id name definition meta tooltip priority '\
                               'criteria ui_control form_order multiplicity '\
-                              'mandatory div_name')
+                              'mandatory default div_name')
         for rownum in range(1, sh.nrows):
             vals = sh.row_values(rownum)
             row_dict = dict(zip(headers, vals))
@@ -168,9 +168,13 @@ class SemanticBot(object):
                     p_def += t_meta % meta
                     p_meta = meta
                 enum = row_dict[ENUM_HEADER]
+                ctrl = row_dict[UI_HEADER]
+                mandatory = row_dict[MANDATORY_HEADER]
                 if enum != '':
                     p_def += t_enums
                     enums = [v.strip() for v in enum.split(',')]
+                    if  ctrl == u'radiobutton' and not mandatory and u'N/A' not in enums:
+                        enums.insert(0,u'N/A')
                     for e in enums:
                         p_def += t_enum % e
                 p_id = int(row_dict[ID_HEADER])
@@ -181,11 +185,12 @@ class SemanticBot(object):
                     old_criteria = criteria
                     ordinal = 0
                 ordinal += 1
-                ctrl = row_dict[UI_HEADER]
                 multip = row_dict[MULTIP_HEADER]
-                mandatory = row_dict[MANDATORY_HEADER]
-                if mandatory:
+                if mandatory or ctrl == u'radiobutton':
                     mandatory = '|mandatory'
+                default = ''
+                if ctrl == u'radiobutton' and len(enums) > 0:
+                    default = '|default=' + enums[0]
                 depends_on = row_dict[DEPENDENCY_HEADER]
                 div_name = ''
                 if depends_on:
@@ -210,6 +215,7 @@ class SemanticBot(object):
                                       form_order=ordinal,
                                       multiplicity=multip,
                                       mandatory=mandatory,
+                                      default=default,
                                       div_name=div_name))
         self.properties = props
         self.trigger_properties = trigger_p
@@ -282,7 +288,8 @@ class SemanticBot(object):
                             size = ''
                         sd = {'name': p.name, 'tooltip': p.tooltip,
                               'ctrl': ctype, 'size': size,
-                              'mandatory': p.mandatory, 'triggers': triggers}
+                              'mandatory': p.mandatory, 'default': p.default,
+                              'triggers': triggers}
                         field_def = FORM_MULTIPLE % sd
                     else:
                         sd = {'name': p.name, 'tooltip': p.tooltip,
@@ -301,7 +308,8 @@ class SemanticBot(object):
                             size = ''
                         sd = {'name': p.name,
                               'ctrl': ctype, 'size': size,
-                              'mandatory': p.mandatory, 'triggers': triggers}
+                              'mandatory': p.mandatory, 'default': p.default,
+                              'triggers': triggers}
                         field_def = FORM_DIV_MULTIPLE % sd
                     else:
                         sd = {'name': p.name,
@@ -392,5 +400,3 @@ if __name__ == '__main__':
         parser.error('Action must be one of: %s' % ACTIONS)
 
     main(options, username, pwd, excel, action, cut_off)
-
-
