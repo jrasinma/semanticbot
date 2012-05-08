@@ -12,9 +12,10 @@ import logging
 FORMAT = '%(asctime)-15s %(message)s'
 logging.basicConfig(level=logging.INFO, format=FORMAT)
 
-WIKI = 'localhost'
-API_PATH = '/mediawiki-1.18.2/'
+WIKI = 'hostname'
+API_PATH = '/wiki/'
 ACTIONS = ['push_properties', 'list_priorities', 'create_form']
+CREATE_TEMPLATES = False;
 
 ID_HEADER = u'Property ID'
 NAME_HEADER = u'Property'
@@ -52,12 +53,16 @@ TEMPLATE_TEMPL = \
 '<pre>\n'\
 '{{%(name)s\n'\
 '%(pre)s'\
+'|Additional information=\n'\
 '}}\n'\
 '</pre>\n'\
 'Edit the page to see the template text.\n'\
 '</noinclude><includeonly>==== %(category)s ====\n'\
-'{| class="wikitable"\n'\
+'{| class="wikitable dsstable"\n'\
 '%(struct)s'\
+'! Additional information\n'\
+'| {{{Additional information|}}}\n'\
+'|-\n'\
 '|}\n\n'\
 '[[Category:DSS]]\n'\
 '</includeonly>\n'
@@ -86,14 +91,19 @@ FORM_TEMPL = \
 '{{{for template|%(name)s|label=%(label)s}}}\n'\
 '{| class="formtable"\n'\
 '%(fields)s'\
+'! Additional information: {{#info: Some comment with Wiki-Syntax}}\n'\
+'| {{{field|Additional information|input type=textarea}}}\n'\
+'|-\n'\
 '%(extra_tooltip)s'\
 '|}\n'\
 '%(divs)s\n'\
 '{{{end template}}}\n\n'
 
 FORM_END = \
-'\'\'\'Free text:\'\'\'\n\n'\
-'{{{standard input|free text|rows=50|cols=110}}}\n\n\n'\
+'\'\'\'Free text: {{#info: Free text with wiki-syntax. '\
+'Use the following tag to list up references used in this document: '\
+'"<nowiki><references/></nowiki>"}}\'\'\'\n\n'\
+'{{{standard input|free text|rows=25|cols=110}}}\n\n\n'\
 '{{{standard input|summary}}}\n\n'\
 '{{{standard input|minor edit}}} {{{standard input|watch}}}\n'\
 '{{{standard input|save}}} {{{standard input|preview}}} '\
@@ -105,14 +115,14 @@ FORM_SINGLE = '! %(name)s: {{#info: %(tooltip)s}}\n'\
               '|-\n'
 FORM_MULTIPLE = '! %(name)s: {{#info: %(tooltip)s}}\n'\
                 '| {{{field|%(name)s|input type=%(ctrl)s%(mandatory)s'\
-                '%(size)s%(triggers)s}}}\n'\
+                '%(default)s%(size)s%(maxlength)s%(triggers)s}}}\n'\
                 '|-\n'
 FORM_DIV_SINGLE = '! %(name)s:\n'\
               '| {{{field|%(name)s%(mandatory)s%(triggers)s}}}\n'\
               '|-\n'
 FORM_DIV_MULTIPLE = '! %(name)s:\n'\
                 '| {{{field|%(name)s|input type=%(ctrl)s%(mandatory)s|'\
-                'size=%(size)s%(triggers)s}}}\n'\
+                '%(default)s%(size)s%(maxlength)s%(triggers)s}}}\n'\
                 '|-\n'
 FORM_CONDITIONAL = '<div id="%(id)s">\n{|\n%(field)s|}\n</div>\n'
 EXTRA_TOOLTIP = '+++%(name)s+++: \n%(tooltip)s\n\n'
@@ -152,7 +162,7 @@ class SemanticBot(object):
         Property = namedtuple('Property',
                               'id name definition meta tooltip priority '\
                               'criteria ui_control form_order multiplicity '\
-                              'mandatory div_name')
+                              'mandatory default div_name')
         for rownum in range(1, sh.nrows):
             vals = sh.row_values(rownum)
             row_dict = dict(zip(headers, vals))
@@ -168,9 +178,13 @@ class SemanticBot(object):
                     p_def += t_meta % meta
                     p_meta = meta
                 enum = row_dict[ENUM_HEADER]
+                ctrl = row_dict[UI_HEADER]
+                mandatory = row_dict[MANDATORY_HEADER]
                 if enum != '':
                     p_def += t_enums
                     enums = [v.strip() for v in enum.split(',')]
+                    if  ctrl == u'radiobutton' and not mandatory and u'N/A' not in enums:
+                        enums.insert(0,u'N/A')
                     for e in enums:
                         p_def += t_enum % e
                 p_id = int(row_dict[ID_HEADER])
@@ -181,11 +195,12 @@ class SemanticBot(object):
                     old_criteria = criteria
                     ordinal = 0
                 ordinal += 1
-                ctrl = row_dict[UI_HEADER]
                 multip = row_dict[MULTIP_HEADER]
-                mandatory = row_dict[MANDATORY_HEADER]
-                if mandatory:
+                if mandatory or ctrl == u'radiobutton':
                     mandatory = '|mandatory'
+                default = ''
+                if ctrl == u'radiobutton' and len(enums) > 0:
+                    default = '|default=' + enums[0]
                 depends_on = row_dict[DEPENDENCY_HEADER]
                 div_name = ''
                 if depends_on:
@@ -210,6 +225,7 @@ class SemanticBot(object):
                                       form_order=ordinal,
                                       multiplicity=multip,
                                       mandatory=mandatory,
+                                      default=default,
                                       div_name=div_name))
         self.properties = props
         self.trigger_properties = trigger_p
@@ -274,15 +290,20 @@ class SemanticBot(object):
                 if not p.div_name:
                     # non conditional property, ending in the form itself
                     if p.ui_control and p.ui_control != 'checkbox':
+                        size = ''
+                        maxlength = ''
                         if ';' in p.ui_control:
-                            ctype, size = p.ui_control.split(';')
-                            size = '|size=%s' % size
+                            ctype, value = p.ui_control.split(';')
+                            if ctype != 'textarea':
+                                size = '|size=%s' % value
+                            else:
+                                maxlength = '|maxlength=%s' % value
                         else:
                             ctype = p.ui_control
-                            size = ''
                         sd = {'name': p.name, 'tooltip': p.tooltip,
-                              'ctrl': ctype, 'size': size,
-                              'mandatory': p.mandatory, 'triggers': triggers}
+                              'ctrl': ctype, 'size': size, 'maxlength': maxlength,
+                              'mandatory': p.mandatory, 'default': p.default,
+                              'triggers': triggers}
                         field_def = FORM_MULTIPLE % sd
                     else:
                         sd = {'name': p.name, 'tooltip': p.tooltip,
@@ -293,15 +314,20 @@ class SemanticBot(object):
                     # conditional property ending to a separate div
                     # NB! Tooltips don't work property inside the divs
                     if p.ui_control and p.ui_control != 'checkbox':
+                        size = ''
+                        maxlength = ''
                         if ';' in p.ui_control:
-                            ctype, size = p.ui_control.split(';')
-                            size = '|size=%s' % size
+                            ctype, value = p.ui_control.split(';')
+                            if ctype != 'textarea':
+                                size = '|size=%s' % value
+                            else:
+                                maxlength = '|maxlength=%s' % value
                         else:
                             ctype = p.ui_control
-                            size = ''
                         sd = {'name': p.name,
-                              'ctrl': ctype, 'size': size,
-                              'mandatory': p.mandatory, 'triggers': triggers}
+                              'ctrl': ctype, 'size': size, 'maxlength': maxlength,
+                              'mandatory': p.mandatory, 'default': p.default,
+                              'triggers': triggers}
                         field_def = FORM_DIV_MULTIPLE % sd
                     else:
                         sd = {'name': p.name,
@@ -320,17 +346,18 @@ class SemanticBot(object):
                 else:
                     templ_struct += TEMPL_MULTIPLE % {'name':p.name}
             if section_placed:
-                sd = {'name': templ_name, 'pre': pre, 'category': category,
-                      'struct': templ_struct}
-                template = TEMPLATE_TEMPL% sd
-                logging.info('Pushing template %s to wiki' % templ_name)
-                logging.info(template)
-                logging.info('-' * 20)
-                #page_name = templ_name.replace(' ', '_')
-                #page = self.site.pages['Template:%s' % page_name]
-                #summary = 'Definition of template derived from the WG1 '\
-                #          'property sheet'
-                #page.save(template, summary=summary)
+                if CREATE_TEMPLATES == True:
+                    sd = {'name': templ_name, 'pre': pre, 'category': category,
+                          'struct': templ_struct}
+                    template = TEMPLATE_TEMPL% sd
+                    logging.info('Pushing template %s to wiki' % templ_name)
+                    logging.info(template)
+                    logging.info('-' * 20)
+                    page_name = templ_name.replace(' ', '_')
+                    page = self.site.pages['Template:%s' % page_name]
+                    summary = 'Definition of template derived from the WG1 '\
+                              'property sheet'
+                    page.save(template, summary=summary)
                 # form
                 if extra_tooltip:
                     extra_tooltip = '!+ {{#info: %s}}\n' % extra_tooltip
@@ -392,5 +419,3 @@ if __name__ == '__main__':
         parser.error('Action must be one of: %s' % ACTIONS)
 
     main(options, username, pwd, excel, action, cut_off)
-
-
