@@ -72,7 +72,7 @@ TEMPL_SINGLE = '! %(name)s\n'\
                '| [[%(name)s::{{{%(name)s|}}}]]\n'\
                '|-\n'
 TEMPL_MULTIPLE = '! %(name)s\n'\
-                 '| {{#arraymap:{{{%(name)s|}}}|,|x|[[%(name)s::x]]}}\n'\
+                 '| {{#arraymap:{{{%(name)s|}}}|,|@@@@|[[%(name)s::@@@@]]}}\n'\
                  '|-\n'
 
 FORM_NAME = 'DSS description'
