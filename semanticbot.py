@@ -12,10 +12,11 @@ import logging
 FORMAT = '%(asctime)-15s %(message)s'
 logging.basicConfig(level=logging.INFO, format=FORMAT)
 
+# configuration parameters, check hostname!
 WIKI = 'hostname'
 API_PATH = '/wiki/'
 ACTIONS = ['push_properties', 'list_priorities', 'create_form']
-CREATE_TEMPLATES = False;
+CREATE_TEMPLATES = True;
 
 ID_HEADER = u'Property ID'
 NAME_HEADER = u'Property'
@@ -182,7 +183,7 @@ class SemanticBot(object):
                 mandatory = row_dict[MANDATORY_HEADER]
                 if enum != '':
                     p_def += t_enums
-                    enums = [v.strip() for v in enum.split(',')]
+                    enums = [v.strip() for v in enum.split(';')]
                     if  ctrl == u'radiobutton' and not mandatory and u'N/A' not in enums:
                         enums.insert(0,u'N/A')
                     for e in enums:
