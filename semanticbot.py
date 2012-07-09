@@ -12,10 +12,12 @@ import logging
 FORMAT = '%(asctime)-15s %(message)s'
 logging.basicConfig(level=logging.INFO, format=FORMAT)
 
-WIKI = 'hostname'
+# configuration parameters, check hostname!
+WIKI = 'fp0804.emu.ee'
 API_PATH = '/wiki/'
-ACTIONS = ['push_properties', 'list_priorities', 'create_form']
-CREATE_TEMPLATES = False
+ACTIONS = ['push_properties', 'clean_properties', 'list_priorities',
+           'create_form']
+CREATE_TEMPLATES = True
 
 TARGET_FORM_HEADER = u'Target form'
 ID_HEADER = u'Property ID'
@@ -34,40 +36,61 @@ DEPENDENCY_HEADER = u'Depends on'
 # In which order are the properties place on the form from the different
 # 'Criteria' sections on the 'forsys_semanticwiki_properties' sheet
 # given by form names from the 'Target form' column
-FORM_ORDER = {'DSS': (u'Wiki quality control',
-                      u'Name, responsible organisation and contact person',
-                      u'Scope of the tool',
-                      u'Concrete application',
-                      u'Installation and support',
-                      u'Data, data model and data management',
-                      u'Models and methods, MBMS, decision support techniques',
-                      u'Support of knowledge management process',
-                      u'Support of social participation',
-                      u'User interface and outputs',
-                      u'System design and development',
-                      u'Technological architecture, integration with other systems',
-                      u'Ongoing development',
-                      u'Documentation',
-                     ),
-             'Case': (u'Wiki quality control',
-                      u'Name, responsible organisation and contact person',
-                      u'Scope of the tool',
-                      u'Concrete application',
-                      u'Installation and support',
-                      u'Data, data model and data management',
-                      u'Models and methods, MBMS, decision support techniques',
-                      u'Support of knowledge management process',
-                      u'Support of social participation',
-                      u'User interface and outputs',
-                      u'System design and development',
-                      u'Technological architecture, integration with other systems',
-                      u'Ongoing development',
-                      u'Documentation',
-                      u'Action',
-                      u'Case study',
-                      u'Lessons-learned',
-                      u'Guidelines',
-                     ),
+# Note that only one of the forms can be of type 'multi-template', i.e.
+# consisting of different sections each having its own template
+
+# 2012-07-6: u'Wiki quality control' removed at least for now since it's
+# plain confusing at the moment for users
+
+
+FORM_DEF = \
+    {'DSS': {'multi-template': True,
+             'content':
+                (
+                u'Wiki quality control',
+                u'Name, responsible organisation and contact person',
+                u'Scope of the tool',
+                u'Concrete application',
+                u'Installation and support',
+                u'Data, data model and data management',
+                u'Models and methods, MBMS, decision support techniques',
+                u'Support of knowledge management process',
+                u'Support of social participation',
+                u'User interface and outputs',
+                u'System design and development',
+                u'Technological architecture, integration with other systems',
+                u'Ongoing development',
+                u'Documentation',
+                u'STSM',
+                u'Case study',
+                u'Lessons-learned (empirical)',
+                u'Guidelines',
+                u'Lessons learned',
+                ),
+           },
+    'Case study': {'multi-template': False,
+                   'content':
+                (
+                u'Name, responsible organisation and contact person',
+                u'Scope of the tool',
+                u'Concrete application',
+                u'Installation and support',
+                u'Data, data model and data management',
+                u'Models and methods, MBMS, decision support techniques',
+                u'Support of knowledge management process',
+                u'Support of social participation',
+                u'User interface and outputs',
+                u'System design and development',
+                u'Technological architecture, integration with other systems',
+                u'Ongoing development',
+                u'Documentation',
+                u'STSM',
+                u'Case study',
+                u'Lessons-learned (empirical)',
+                u'Guidelines',
+                u'Lessons learned',
+                ),
+                 },
              }
 
 TEMPLATE_TEMPL = \
@@ -134,17 +157,18 @@ FORM_END = \
 '</includeonly>\n'
 
 FORM_SINGLE = '! %(name)s: {{#info: %(tooltip)s}}\n'\
-              '| {{{field|%(name)s%(mandatory)s%(triggers)s}}}\n'\
-              '|-\n'
+              '| {{{field|%(name)s%(mandatory)s%(values_from)s%(triggers)s'\
+              '}}}\n|-\n'
 FORM_MULTIPLE = '! %(name)s: {{#info: %(tooltip)s}}\n'\
                 '| {{{field|%(name)s|input type=%(ctrl)s%(mandatory)s'\
-                '%(default)s%(size)s%(maxlength)s%(triggers)s}}}\n'\
-                '|-\n'
+                '%(values_from)s%(default)s%(size)s%(maxlength)s%(triggers)s'\
+                '}}}\n|-\n'
 FORM_DIV_SINGLE = '! %(name)s:\n'\
-              '| {{{field|%(name)s%(mandatory)s%(triggers)s}}}\n'\
-              '|-\n'
+              '| {{{field|%(name)s%(mandatory)s%(values_from)s%(triggers)s'\
+              '}}}\n|-\n'
 FORM_DIV_MULTIPLE = '! %(name)s:\n'\
-                '| {{{field|%(name)s|input type=%(ctrl)s%(mandatory)s|'\
+                '| {{{field|%(name)s|input type=%(ctrl)s%(mandatory)s'\
+                '%(values_from)%|'\
                 '%(default)s%(size)s%(maxlength)s%(triggers)s}}}\n'\
                 '|-\n'
 FORM_CONDITIONAL = '<div id="%(id)s">\n{|\n%(field)s|}\n</div>\n'
@@ -191,15 +215,20 @@ class SemanticBot(object):
         ctrl = row_dict[UI_HEADER].lower()
         mandatory = row_dict[MANDATORY_HEADER]
         enums = []
-        if enum != '':
+        values_from = ''
+        if enum.startswith('property:'):
+            values_from = '|values from property=%s' % (enum.split(':')[1],)
+        elif enum.startswith('category:'):
+            values_from = '|values from category=%s' % (enum.split(':')[1],)
+        elif enum != '':
             p_def += t_enums
-            enums = [v.strip() for v in enum.split(',')]
-            if  ctrl == u'radiobutton' and not mandatory and u'N/A' not in enums:
+            enums = [v.strip() for v in enum.split(';')]
+            if  ctrl == u'radiobutton' and not (mandatory and u'N/A' in enums):
                 enums.insert(0, u'N/A')
             for e in enums:
                 p_def += t_enum % e
 
-        return p_def, p_meta, tooltip, enums
+        return p_def, p_meta, tooltip, enums, values_from
 
     def read_property_Excel(self, e_file):
         """
@@ -211,6 +240,7 @@ class SemanticBot(object):
         wb = xlrd.open_workbook(e_file)
         sh = wb.sheet_by_index(0)
         headers = sh.row_values(0)
+        p_names = set([])
         props = []
         trigger_p = {}
         old_criteria = ''
@@ -218,7 +248,9 @@ class SemanticBot(object):
         Property = namedtuple('Property',
                               'target_forms id name definition meta tooltip '\
                               'priority criteria ui_control form_order '\
-                              'multiplicity mandatory default div_name')
+                              'multiplicity mandatory default div_name '\
+                              'values_from')
+        name_error = False
         for rownum in range(1, sh.nrows):
             vals = sh.row_values(rownum)
             row_dict = dict(zip(headers, vals))
@@ -228,13 +260,25 @@ class SemanticBot(object):
                 # property definition row; if no data type, not a property row
                 continue
             res = self._create_property_wiki_definition(row_dict, data_type)
-            p_def, p_meta, tooltip, enums = res
+            p_def, p_meta, tooltip, enums, values_from = res
             tfs = row_dict[TARGET_FORM_HEADER]
-            target_forms = [v.strip() for v in tfs.split(',')]
+            target_forms = [v.strip() for v in tfs.split(';')]
             p_id = int(row_dict[ID_HEADER])
+
             name = row_dict[NAME_HEADER]
+            if name in p_names:
+                msg = "Property '%s' used at least twice in the definition "\
+                        "sheet" % name
+                logging.error(msg)
+                name_error = True
+            p_names.add(name)
+
             priority = row_dict[PRIORITY_HEADER]
             criteria = row_dict[CRITERIA_HEADER]
+            if criteria == u'':
+                msg = 'No category/criteria for property %s' % name
+                logging.error(msg)
+                sys.exit(1)
             if old_criteria != criteria:
                 # new section of properties
                 old_criteria = criteria
@@ -279,9 +323,67 @@ class SemanticBot(object):
                                   multiplicity=multip,
                                   mandatory=mandatory,
                                   default=default,
-                                  div_name=div_name))
+                                  div_name=div_name,
+                                  values_from=values_from))
         self.properties = props
         self.trigger_properties = trigger_p
+
+        if name_error:
+            msg = 'Exiting due to property naming errors'
+            logging.error(msg)
+            sys.exit(1)
+
+    def clean_properties(self):
+        """
+        Remove properties from Wiki that are not in the property sheet
+        Note, to be used with extreme caution...!
+        """
+        try:
+            from bs4 import BeautifulSoup
+            import urllib2
+        except:
+            msg = 'This action needs installation of BeautifulSoup module to '\
+                    'function, exiting'
+            logging.error(msg)
+            sys.exit(1)
+
+        wiki_props = set([])
+
+        url = 'http://%s%sindex.php?title=Special:Properties&limit=500'\
+                % (WIKI, API_PATH)
+        response = urllib2.urlopen(url)
+        html = response.read()
+        soup = BeautifulSoup(html)
+        links = soup.find_all('a')
+        for l in links:
+            if 'title' in l.attrs:
+                if 'Property' in l.attrs['title']:
+                    p = l.parent
+                    if 'class' in p.attrs:
+                        if u'smwbuiltin' in p.attrs[u'class']:
+                            # this is a built in property
+                            continue
+                    #print l.attrs['title']
+                    p_name = l.attrs['title'].split(':')[1]
+                    if 'page does not exist' not in p_name:
+                        wiki_props.add(p_name)
+
+        sheet_props = set([])
+        for p in self.properties:
+            sheet_props.add(p.name)
+        not_in_sheet = wiki_props.difference(sheet_props)
+        if len(not_in_sheet) > 0:
+            logging.info('Deleting properties: %s' % not_in_sheet)
+            reason = 'Property no longer on FORSYS property sheet'
+            try:
+                for p in not_in_sheet:
+                    page = self.site.pages['Property:%s' % p]
+                    page.delete(reason)
+            except:
+                msg = 'Failed, probably due to insufficient priviledges'
+                logging.error(msg)
+                print 'Delete these properties manually:'
+                pprint(not_in_sheet)
 
 
     def put_properties2wiki(self):
@@ -327,12 +429,13 @@ class SemanticBot(object):
                 ctype = p.ui_control
             sd = {'name': p.name, 'tooltip': p.tooltip,
                   'ctrl': ctype, 'size': size, 'maxlength': maxlength,
-                  'mandatory': p.mandatory, 'default': p.default,
-                  'triggers': triggers}
+                  'mandatory': p.mandatory, 'values_from': p.values_from,
+                  'default': p.default, 'triggers': triggers}
             field_def = FORM_MULTIPLE % sd
         else:
             sd = {'name': p.name, 'tooltip': p.tooltip,
-                  'mandatory': p.mandatory, 'triggers': triggers}
+                  'mandatory': p.mandatory, 'values_from':p.values_from,
+                  'triggers': triggers}
             field_def = FORM_SINGLE % sd
         return field_def
 
@@ -357,86 +460,102 @@ class SemanticBot(object):
                 ctype = p.ui_control
             sd = {'name': p.name,
                   'ctrl': ctype, 'size': size, 'maxlength': maxlength,
-                  'mandatory': p.mandatory, 'default': p.default,
-                  'triggers': triggers}
+                  'mandatory': p.mandatory, 'values_from': p.values_from,
+                  'default': p.default, 'triggers': triggers}
             field_def = FORM_DIV_MULTIPLE % sd
         else:
             sd = {'name': p.name,
-                  'mandatory': p.mandatory, 'triggers': triggers}
+                  'mandatory': p.mandatory, 'values_from':p.values_from,
+                  'triggers': triggers}
             field_def = FORM_DIV_SINGLE % sd
         sd = {'id': p.div_name, 'field': field_def}
         return sd
 
-    def _create_template(self, form_name, templ_name, pre, category,
-                         templ_struct):
+    def _create_template(self, form_name, category, f_def):
         """
         Creates a template definition and stores it in the wiki
 
         form_name -- form being created
-        templ_name -- template name
-        pre -- description text
         category -- category the template is for
-        templ_struct -- template definition
+        f_def -- form definition data for the category
         """
-        sd = {'form_name': form_name, 'name': templ_name, 'pre': pre,
-              'category': category, 'struct': templ_struct}
+        sd = {'form_name': form_name, 'name': f_def['templ_name'],
+              'pre': f_def['pre'], 'category': category,
+              'struct': f_def['templ_struct']}
         template = TEMPLATE_TEMPL% sd
-        logging.info('Pushing template %s to wiki' % templ_name)
+        logging.info('Pushing template %s to wiki' % f_def['templ_name'])
         logging.info(template)
         logging.info('-' * 20)
-        page_name = templ_name.replace(' ', '_')
+        page_name = f_def['templ_name'].replace(' ', '_')
         page = self.site.pages['Template:%s' % page_name]
         summary = 'Definition of template derived from the WG1 '\
                   'property sheet'
         page.save(template, summary=summary)
 
-    def _collect_category_properties(self, form_name, category, form_p):
+    def _collect_category_properties(self, form_name, category, f_def):
         """
-        Process properties for the given category for inclusion in the form
+        Process properties for the given category ('Criteria' on sheet)
+        for inclusion in the form
 
         form_name -- the name of the form being created
-        category -- category to get properties for
-        form_p -- all properties
+        category -- category/criteria to get properties for
+        f_def -- form definition data
         """
-        templ_struct = ''
-        pre = ''
-        templ_name = '%s, %s' % (form_name, category)
-        f_struct = ''
-        divs = ''
-        extra_tooltip = ''
-        section_placed = False
-        for p in form_p:
+        if FORM_DEF[form_name]['multi-template']:
+            f_def['templ_struct'] = ''
+            f_def['pre'] = ''
+            f_def['templ_name'] = '%s, %s' % (form_name, category)
+            f_def['f_struct'] = ''
+            f_def['divs'] = ''
+            f_def['extra_tooltip'] = ''
+            f_def['section_placed'] = False
+        for p in f_def['form_p']:
             if form_name not in p.target_forms or p.criteria != category:
                 continue
-            if not section_placed:
-                #f_struct += SECTION_TEMPL % category
-                section_placed = True
+            if not f_def['section_placed']:
+                f_def['section_placed'] = True
             # Form part
             triggers = self.trigger_properties.get(p.id, '')
             if triggers:
                 triggers = triggers[:-1]
             if not p.div_name:
                 field_def = self._add_non_cond_form_prop(p, triggers)
-                f_struct += field_def
+                f_def['f_struct'] += field_def
             else:
                 sd = self._add_cond_form_prop(p, triggers)
-                divs += FORM_CONDITIONAL % sd
+                f_def['divs'] += FORM_CONDITIONAL % sd
                 # tooltip to be placed outside the div
                 sd = {'name': p.name, 'tooltip': p.tooltip}
-                extra_tooltip += EXTRA_TOOLTIP % sd
+                f_def['extra_tooltip'] += EXTRA_TOOLTIP % sd
 
             # Template part
-            pre += TEMPL_PRE % p.name
+            f_def['pre'] += TEMPL_PRE % p.name
             if p.multiplicity == u'single':
-                templ_struct += TEMPL_SINGLE % {'name':p.name}
+                f_def['templ_struct'] += TEMPL_SINGLE % {'name':p.name}
             else:
-                templ_struct += TEMPL_MULTIPLE % {'name':p.name}
-        return (section_placed, templ_struct, pre, templ_name, f_struct, divs,
-                extra_tooltip)
+                f_def['templ_struct'] += TEMPL_MULTIPLE % {'name':p.name}
+
+    def _put2form_template(self, form_templates, category, f_def):
+        """
+        Process info from section properties and place it to the form
+        template
+        """
+        if f_def['section_placed']:
+            if CREATE_TEMPLATES:
+                self._create_template(form_name, category, f_def)
+            # form
+            if f_def['extra_tooltip']:
+                f_def['extra_tooltip'] = '!+ {{#info: %s}}\n'\
+                                         % f_def['extra_tooltip']
+            sd = {'name': f_def['templ_name'], 'label': category,
+                  'fields': f_def['f_struct'], 'divs': f_def['divs'],
+                  'extra_tooltip': f_def['extra_tooltip']}
+            form_templates += FORM_TEMPL % sd
+        return form_templates
 
     def create_form(self, form_name, cut_off):
         """
-        Create the DSS description form and the template it's base on out of
+        Create the given form and the template it's based on out of
         the properties in the sheet based on the priority scores given for
         the properties
 
@@ -445,30 +564,38 @@ class SemanticBot(object):
         cut_off -- cut off for property priority score for inclusion in the
                    form
         """
-        form_p = []
+        if not form_name in FORM_DEF:
+            msg = 'You must define the order in which differenct sections '\
+                  '(Criteria column on sheet) appear on the form, see '\
+                  'FORM_DEF in the script'
+            logging.error(msg)
+            sys.exit(1)
+        f_def = {'form_p': [],
+                 'section_placed': False,
+                 'templ_struct': '',
+                 'pre': '',
+                 'templ_name': '',
+                 'f_struct': '',
+                 'divs': '',
+                 'extra_tooltip': '',
+                }
         for p in self.properties:
             if p.priority >= cut_off:
-                form_p.append(p)
-        form_p.sort(key=lambda prop: (prop.criteria, prop.form_order))
+                f_def['form_p'].append(p)
+        f_def['form_p'].sort(key=lambda prop: (prop.criteria, prop.form_order))
         form_templates = ''
-        for category in FORM_ORDER:
-            res = self._collect_category_properties(form_name, category,
-                                                    form_p)
-
-            section_placed, templ_struct, pre, templ_name, f_struct, divs,\
-                extra_tooltip = res
-
-            if section_placed:
-                if CREATE_TEMPLATES:
-                    self._create_template(form_name, templ_name, pre, category,
-                                          templ_struct)
-                # form
-                if extra_tooltip:
-                    extra_tooltip = '!+ {{#info: %s}}\n' % extra_tooltip
-                sd = {'name': templ_name, 'label': category,
-                      'fields': f_struct, 'divs': divs,
-                      'extra_tooltip': extra_tooltip}
-                form_templates += FORM_TEMPL % sd
+        for category in FORM_DEF[form_name]['content']:
+            self._collect_category_properties(form_name, category, f_def)
+            # form has different sections, each having its own template
+            if FORM_DEF[form_name]['multi-template']:
+                form_templates = self._put2form_template(form_templates,
+                                                         category, f_def)
+        if not FORM_DEF[form_name]['multi-template']:
+            # thw whole form in one template
+            f_def['templ_name'] = form_name
+            category = form_name
+            form_templates = self._put2form_template(form_templates, category,
+                                                     f_def)
 
         begin = FORM_BEGIN % {'form_name': form_name}
         form = begin + form_templates + FORM_END
@@ -477,7 +604,7 @@ class SemanticBot(object):
         logging.info('-' * 20)
         page_name = form_name.replace(' ', '_')
         page = self.site.pages['Form:%s' % page_name]
-        summary = 'Definition of form derived from the WG1 property sheet'
+        summary = 'Definition of form derived from the FORSYS property sheet'
         page.save(form, summary=summary)
 
 def main(options, username, pwd, excel, action, form_name, cut_off):
@@ -485,6 +612,8 @@ def main(options, username, pwd, excel, action, form_name, cut_off):
     bot.read_property_Excel(excel)
     if action == 'push_properties':
         bot.put_properties2wiki()
+    elif action == 'clean_properties':
+        bot.clean_properties()
     elif action == 'list_priorities':
         bot.list_priorities()
     elif action == 'create_form':
@@ -494,7 +623,8 @@ if __name__ == '__main__':
     from optparse import OptionParser
     usage = "usage: %prog [options] username:password excel_file action\n"\
             "    excel_file -- FORSYS_WIKI_properties from Google Docs\n"\
-            "    action -- push_properties, list_priorities, create_form\n"\
+            "    action -- push_properties, clean_properties, "\
+            "list_priorities, create_form\n"\
             "    cut_off -- only for create_form: priority cut off score"
     parser = OptionParser(usage)
     parser.add_option('-d', '--debug', dest='debug', action='store_true',
