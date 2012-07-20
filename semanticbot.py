@@ -32,12 +32,17 @@ UI_HEADER = u'Form control'
 MULTIP_HEADER = u'Form multiplicity'
 MANDATORY_HEADER = u'Mandatory'
 DEPENDENCY_HEADER = u'Depends on'
+ORDER_HEADER = u'Form order'
 
 # In which order are the properties place on the form from the different
 # 'Criteria' sections on the 'forsys_semanticwiki_properties' sheet
 # given by form names from the 'Target form' column
 # Note that only one of the forms can be of type 'multi-template', i.e.
 # consisting of different sections each having its own template
+
+# the other forms are not multi-template, and the order in which the properties
+# are placed on the form is defined with ordering in a sheet column, see
+# ORDER_HEADER
 
 # 2012-07-6: u'Wiki quality control' removed at least for now since it's
 # plain confusing at the moment for users
@@ -69,29 +74,8 @@ FORM_DEF = \
                 ),
            },
     'Case study': {'multi-template': False,
-                   'content':
-                (
-                u'Name, responsible organisation and contact person',
-                u'Scope of the tool',
-                u'Concrete application',
-                u'Installation and support',
-                u'Data, data model and data management',
-                u'Models and methods, MBMS, decision support techniques',
-                u'Support of knowledge management process',
-                u'Support of social participation',
-                u'User interface and outputs',
-                u'System design and development',
-                u'Technological architecture, integration with other systems',
-                u'Ongoing development',
-                u'Documentation',
-                u'STSM',
-                u'Case study',
-                u'Lessons-learned (empirical)',
-                u'Guidelines',
-                u'Lessons learned',
-                ),
                  },
-             }
+     }
 
 TEMPLATE_TEMPL = \
 '<noinclude>\n'\
@@ -247,7 +231,7 @@ class SemanticBot(object):
         ordinal = 0
         Property = namedtuple('Property',
                               'target_forms id name definition meta tooltip '\
-                              'priority criteria ui_control form_order '\
+                              'order priority criteria ui_control form_order '\
                               'multiplicity mandatory default div_name '\
                               'values_from')
         name_error = False
@@ -275,6 +259,10 @@ class SemanticBot(object):
 
             priority = row_dict[PRIORITY_HEADER]
             criteria = row_dict[CRITERIA_HEADER]
+            order = row_dict[ORDER_HEADER]
+            if order:
+                order = dict([(w[0], int(w[1])) for w in \
+                              [v.split(':') for v in order.split(';')]])
             if criteria == u'':
                 msg = 'No category/criteria for property %s' % name
                 logging.error(msg)
@@ -316,6 +304,7 @@ class SemanticBot(object):
                                   definition=p_def,
                                   meta=p_meta,
                                   tooltip=tooltip,
+                                  order=order,
                                   priority=priority,
                                   criteria=criteria,
                                   ui_control=ctrl,
@@ -492,14 +481,68 @@ class SemanticBot(object):
                   'property sheet'
         page.save(template, summary=summary)
 
-    def _collect_category_properties(self, form_name, category, f_def):
+    def _collect_all_properties(self, form_name, f_def):
+        """
+        Process properties for the the whole form in given order
+        for inclusion in the form
+
+        form_name -- the name of the form being created
+        f_def -- form definition data
+        """
+        f_def['section_placed'] = True
+        form_p = []
+        for p in f_def['form_p']:
+            if form_name not in p.target_forms:
+                continue
+            if form_name not in p.order:
+                msg = 'Property %s labeled for form %s, but has no order '\
+                        'ordinal' % (p.name, form_name)
+                logging.error(msg)
+                continue
+            p_ordinal = p.order[form_name]
+            form_p.append((p_ordinal, {'f_struct': '',
+                                       'divs': '',
+                                       'extra_tooltip': '',
+                                       'pre': '',
+                                       'templ_struct': ''}))
+            # Form part
+            triggers = self.trigger_properties.get(p.id, '')
+            if triggers:
+                triggers = triggers[:-1]
+            if not p.div_name:
+                field_def = self._add_non_cond_form_prop(p, triggers)
+                form_p[-1][1]['f_struct'] = field_def
+            else:
+                sd = self._add_cond_form_prop(p, triggers)
+                form_p[-1][1]['divs'] = FORM_CONDITIONAL % sd
+                # tooltip to be placed outside the div
+                sd = {'name': p.name, 'tooltip': p.tooltip}
+                form_p[-1][1]['extra_tooltip'] = EXTRA_TOOLTIP % sd
+
+            # Template part
+            form_p[-1][1]['pre'] = TEMPL_PRE % p.name
+            if p.multiplicity == u'single':
+                form_p[-1][1]['templ_struct'] = TEMPL_SINGLE % {'name':p.name}
+            else:
+                form_p[-1][1]['templ_struct'] = \
+                        TEMPL_MULTIPLE % {'name':p.name}
+
+        form_p.sort()
+        for p in form_p:
+            f_def['f_struct'] += p[1]['f_struct']
+            f_def['divs'] += p[1]['divs']
+            f_def['extra_tooltip'] += p[1]['extra_tooltip']
+            f_def['pre'] += p[1]['pre']
+            f_def['templ_struct'] += p[1]['templ_struct']
+
+    def _collect_category_properties(self, form_name, f_def, category=None):
         """
         Process properties for the given category ('Criteria' on sheet)
         for inclusion in the form
 
         form_name -- the name of the form being created
-        category -- category/criteria to get properties for
         f_def -- form definition data
+        category -- category/criteria to get properties for
         """
         if FORM_DEF[form_name]['multi-template']:
             f_def['templ_struct'] = ''
@@ -584,14 +627,16 @@ class SemanticBot(object):
                 f_def['form_p'].append(p)
         f_def['form_p'].sort(key=lambda prop: (prop.criteria, prop.form_order))
         form_templates = ''
-        for category in FORM_DEF[form_name]['content']:
-            self._collect_category_properties(form_name, category, f_def)
-            # form has different sections, each having its own template
-            if FORM_DEF[form_name]['multi-template']:
+        if FORM_DEF[form_name]['multi-template']:
+            for category in FORM_DEF[form_name]['content']:
+                self._collect_category_properties(form_name, f_def, category)
+                # form has different sections, each having its own template
                 form_templates = self._put2form_template(form_templates,
                                                          category, f_def)
-        if not FORM_DEF[form_name]['multi-template']:
-            # thw whole form in one template
+        else:
+            # the whole form in one template, the order of fields defined by
+            # a column on the sheet
+            self._collect_all_properties(form_name, f_def)
             f_def['templ_name'] = form_name
             category = form_name
             form_templates = self._put2form_template(form_templates, category,
