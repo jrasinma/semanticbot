@@ -6,75 +6,79 @@ sys.path.append('mwclient')
 import os
 import mwclient
 import xlrd
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 from pprint import pprint
 import logging
 FORMAT = '%(asctime)-15s %(message)s'
 logging.basicConfig(level=logging.INFO, format=FORMAT)
 
 # configuration parameters, check hostname!
-WIKI = 'fp0804.emu.ee'
+#WIKI = 'fp0804.emu.ee'
+WIKI = 'test.forsys.siwawa.org'
 API_PATH = '/wiki/'
 ACTIONS = ['push_properties', 'clean_properties', 'list_priorities',
-           'create_form']
+           'create_form', 'create_categories']
 CREATE_TEMPLATES = True
 
 TARGET_FORM_HEADER = u'Target form'
 ID_HEADER = u'Property ID'
 NAME_HEADER = u'Property'
+LABEL_HEADER = u'Form label'
 TYPE_HEADER = u'Type'
 META_HEADER = u'Metadata'
 TOOLTIP_HEADER = u'Tooltip'
 ENUM_HEADER = u'Value'
 PRIORITY_HEADER = u'Priority score'
-CRITERIA_HEADER = u'Criteria'
+SECTION_HEADER = u'Title'
 UI_HEADER = u'Form control'
 MULTIP_HEADER = u'Form multiplicity'
 MANDATORY_HEADER = u'Mandatory'
 DEPENDENCY_HEADER = u'Depends on'
-ORDER_HEADER = u'Form order'
+
+PAGE_PROPERTY_CATEGORY_HEADER = u'Related category for property'
+PAGE_PROPERTY_CATEGORY_TYPE_HEADER = u'Type of related category'
+PAGE_SPECIFIC_SUB_CATEGORY = u'specific'
+GENERAL_SUB_CATEGORY = u'general'
 
 # In which order are the properties place on the form from the different
-# 'Criteria' sections on the 'forsys_semanticwiki_properties' sheet
+# 'Title' sections on the 'forsys_semanticwiki_properties' sheet
 # given by form names from the 'Target form' column
 # Note that only one of the forms can be of type 'multi-template', i.e.
 # consisting of different sections each having its own template
 
 # the other forms are not multi-template, and the order in which the properties
 # are placed on the form is defined with ordering in a sheet column, see
-# ORDER_HEADER
+# 'form order' setting in the FORM_DEF
 
 # 2012-07-6: u'Wiki quality control' removed at least for now since it's
 # plain confusing at the moment for users
 
 
 FORM_DEF = \
-    {'DSS': {'multi-template': True,
+    {u'DSS': {'multi-template': True,
              'content':
-                (
-                u'Wiki quality control',
-                u'Name, responsible organisation and contact person',
-                u'Scope of the tool',
-                u'Concrete application',
-                u'Installation and support',
-                u'Data, data model and data management',
-                u'Models and methods, MBMS, decision support techniques',
-                u'Support of knowledge management process',
-                u'Support of social participation',
-                u'User interface and outputs',
-                u'System design and development',
-                u'Technological architecture, integration with other systems',
-                u'Ongoing development',
-                u'Documentation',
-                u'STSM',
-                u'Case study',
-                u'Lessons-learned (empirical)',
-                u'Guidelines',
-                u'Lessons learned',
+                (u'Wiki quality control',
+                 u'Name, responsible organisation and contact person',
+                 u'Software identification',
+                 u'Description',
+                 u'Concrete application',
+                 u'Decision support techniques used in the DSS',
+                 u'Support of Knowledge Management',
+                 u'Support of social participation',
+                 u'DSS development',
+                 u'DSS',
+                 u'Documentation',
                 ),
+              'category with form': True,
            },
-    'Case study': {'multi-template': False,
+    u'Case study': {'multi-template': False,
+                   'form order': 'FormCase',
+                   'category with form': True,
                  },
+    u'Lesson': {'multi-template': False,
+               'form order': 'FormLesson',
+               'category with form': True,
+              },
      }
 
 TEMPLATE_TEMPL = \
@@ -140,19 +144,21 @@ FORM_END = \
 '{{{standard input|changes}}} {{{standard input|cancel}}}\n'\
 '</includeonly>\n'
 
-FORM_SINGLE = '! %(name)s: {{#info: %(tooltip)s}}\n'\
-              '| {{{field|%(name)s%(mandatory)s%(values_from)s%(triggers)s'\
+FORM_SINGLE = '! %(label)s: {{#info: %(tooltip)s}}\n'\
+              '| {{{field|%(name)s%(mandatory)s%(values_from)s%(default)s'\
+              '%(triggers)s'\
               '}}}\n|-\n'
-FORM_MULTIPLE = '! %(name)s: {{#info: %(tooltip)s}}\n'\
+FORM_MULTIPLE = '! %(label)s: {{#info: %(tooltip)s}}\n'\
                 '| {{{field|%(name)s|input type=%(ctrl)s%(mandatory)s'\
                 '%(values_from)s%(default)s%(size)s%(maxlength)s%(triggers)s'\
                 '}}}\n|-\n'
-FORM_DIV_SINGLE = '! %(name)s:\n'\
-              '| {{{field|%(name)s%(mandatory)s%(values_from)s%(triggers)s'\
+FORM_DIV_SINGLE = '! %(label)s:\n'\
+              '| {{{field|%(name)s%(mandatory)s%(values_from)s'\
+              '%(default)s%(size)s%(triggers)s'\
               '}}}\n|-\n'
-FORM_DIV_MULTIPLE = '! %(name)s:\n'\
+FORM_DIV_MULTIPLE = '! %(label)s:\n'\
                 '| {{{field|%(name)s|input type=%(ctrl)s%(mandatory)s'\
-                '%(values_from)%|'\
+                '%(values_from)s'\
                 '%(default)s%(size)s%(maxlength)s%(triggers)s}}}\n'\
                 '|-\n'
 FORM_CONDITIONAL = '<div id="%(id)s">\n{|\n%(field)s|}\n</div>\n'
@@ -182,6 +188,7 @@ class SemanticBot(object):
         t_meta = u'\n\n%s'
         t_enums = u'\n\nThe allowed values for this property are:'
         t_enum = u'\n* [[Allows value::%s]]'
+        t_df = u'\n\n[[Has default form::%s]]'
 
         # property semantic wiki definition
         p_def = t_type % data_type
@@ -194,13 +201,36 @@ class SemanticBot(object):
             p_def += t_meta % meta
             p_meta = meta
 
+        # the form that is used to edit the page this property value points
+        # to
+        form_category = False
+        df = ''
+        page_prop_category = \
+                row_dict[PAGE_PROPERTY_CATEGORY_HEADER]
+        page_prop_category_type = \
+                row_dict[PAGE_PROPERTY_CATEGORY_TYPE_HEADER].lower()
+        if page_prop_category_type == PAGE_SPECIFIC_SUB_CATEGORY:
+            df = page_prop_category
+            has_def_form = '[[[Has default form::%s]]' % page_prop_category
+        elif page_prop_category_type == GENERAL_SUB_CATEGORY:
+            has_def_form = ''
+        if page_prop_category != '':
+            self.categories[page_prop_category] = {'has def form': has_def_form,
+                                                   'category pages': [],}
+
         # process the enumeration of possible values for the property
         enum = row_dict[ENUM_HEADER]
         ctrl = row_dict[UI_HEADER].lower()
         mandatory = row_dict[MANDATORY_HEADER]
         enums = []
         values_from = ''
-        if enum.startswith('property:'):
+        if page_prop_category_type == PAGE_SPECIFIC_SUB_CATEGORY:
+            values_from = '|values from category=%s' % (page_prop_category)
+        elif page_prop_category_type == GENERAL_SUB_CATEGORY:
+            values_from = '|values from category=%s' % (page_prop_category)
+            self.categories[page_prop_category]['category pages'] = \
+                    [v.strip() for v in enum.split(';')]
+        elif enum.startswith('property:'):
             values_from = '|values from property=%s' % (enum.split(':')[1],)
         elif enum.startswith('category:'):
             values_from = '|values from category=%s' % (enum.split(':')[1],)
@@ -212,7 +242,10 @@ class SemanticBot(object):
             for e in enums:
                 p_def += t_enum % e
 
-        return p_def, p_meta, tooltip, enums, values_from
+        if df != '':
+            p_def += t_df % df
+
+        return p_def, p_meta, tooltip, enums, values_from, form_category
 
     def read_property_Excel(self, e_file):
         """
@@ -221,6 +254,8 @@ class SemanticBot(object):
 
         e_file -- Excel file to process
         """
+        self.categories = {}
+        self.form_def = FORM_DEF
         wb = xlrd.open_workbook(e_file)
         sh = wb.sheet_by_index(0)
         headers = sh.row_values(0)
@@ -230,10 +265,10 @@ class SemanticBot(object):
         old_criteria = ''
         ordinal = 0
         Property = namedtuple('Property',
-                              'target_forms id name definition meta tooltip '\
-                              'order priority criteria ui_control form_order '\
-                              'multiplicity mandatory default div_name '\
-                              'values_from')
+                              'target_forms id label name definition meta '\
+                              'tooltip order priority section ui_control '\
+                              'dss_form_order multiplicity mandatory '\
+                              'default div_name my_triggers values_from')
         name_error = False
         for rownum in range(1, sh.nrows):
             vals = sh.row_values(rownum)
@@ -244,9 +279,14 @@ class SemanticBot(object):
                 # property definition row; if no data type, not a property row
                 continue
             res = self._create_property_wiki_definition(row_dict, data_type)
-            p_def, p_meta, tooltip, enums, values_from = res
+            p_def, p_meta, tooltip, enums, values_from, form_category = res
             tfs = row_dict[TARGET_FORM_HEADER]
             target_forms = [v.strip() for v in tfs.split(';')]
+            for tf in target_forms:
+                if tf != '' and tf not in self.form_def:
+                    self.form_def[tf] = {'multi-template': False,
+                                         'form order': 'sheet',
+                                         'category with form': False,}
             p_id = int(row_dict[ID_HEADER])
 
             name = row_dict[NAME_HEADER]
@@ -256,20 +296,28 @@ class SemanticBot(object):
                 logging.error(msg)
                 name_error = True
             p_names.add(name)
+            label = row_dict[LABEL_HEADER]
 
             priority = row_dict[PRIORITY_HEADER]
-            criteria = row_dict[CRITERIA_HEADER]
-            order = row_dict[ORDER_HEADER]
-            if order:
-                order = dict([(w[0], int(w[1])) for w in \
-                              [v.split(':') for v in order.split(';')]])
-            if criteria == u'':
-                msg = 'No category/criteria for property %s' % name
+            section = row_dict[SECTION_HEADER]
+            order = {}
+            for f_name, fdef in self.form_def.iteritems():
+                if f_name == 'DSS':
+                    continue
+                how2order = fdef['form order']
+                if how2order == 'sheet':
+                    f_ord = rownum
+                else:
+                    f_ord = row_dict[fdef['form order']]
+                if f_ord:
+                    order[f_name] = f_ord
+            if section == u'' and f_name == 'DSS':
+                msg = 'No category/section for property %s' % name
                 logging.error(msg)
                 sys.exit(1)
-            if old_criteria != criteria:
+            if old_criteria != section:
                 # new section of properties
-                old_criteria = criteria
+                old_criteria = section
                 ordinal = 0
             ordinal += 1
             multip = row_dict[MULTIP_HEADER]
@@ -282,10 +330,14 @@ class SemanticBot(object):
             default = ''
             if ctrl == u'radiobutton' and len(enums) > 0:
                 default = '|default=' + enums[0]
+            elif u'default page' in ctrl:
+                default = '|default={{PAGENAME}}.%s'
+                ctrl = ctrl.strip(u'default page')
 
             # process properties depending on some other property and its value
             depends_on = row_dict[DEPENDENCY_HEADER]
             div_name = ''
+            my_triggers = set([])
             if depends_on:
                 # push the dependent properties to the master property
                 # show on select setting
@@ -293,6 +345,7 @@ class SemanticBot(object):
                 for t in triggers:
                     t_id, selection = [v.strip() for v in t.split(';')]
                     t_id = int(t_id)
+                    my_triggers.add(t_id)
                     if t_id not in trigger_p:
                         trigger_p[t_id] = '|show on select='
                     div_name = name.replace(' ', '_')
@@ -301,18 +354,20 @@ class SemanticBot(object):
             props.append(Property(id=p_id,
                                   target_forms=target_forms,
                                   name=name,
+                                  label=label,
                                   definition=p_def,
                                   meta=p_meta,
                                   tooltip=tooltip,
                                   order=order,
                                   priority=priority,
-                                  criteria=criteria,
+                                  section=section,
                                   ui_control=ctrl,
-                                  form_order=ordinal,
+                                  dss_form_order=ordinal,
                                   multiplicity=multip,
                                   mandatory=mandatory,
                                   default=default,
                                   div_name=div_name,
+                                  my_triggers=my_triggers,
                                   values_from=values_from))
         self.properties = props
         self.trigger_properties = trigger_p
@@ -369,10 +424,8 @@ class SemanticBot(object):
                     page = self.site.pages['Property:%s' % p]
                     page.delete(reason)
             except:
-                msg = 'Failed, probably due to insufficient priviledges'
+                msg = 'Deletion failed: %s' % (p, )
                 logging.error(msg)
-                print 'Delete these properties manually:'
-                pprint(not_in_sheet)
 
 
     def put_properties2wiki(self):
@@ -394,17 +447,23 @@ class SemanticBot(object):
         """
         p_order = []
         for p in self.properties:
-            p_order.append((p.priority, p.name, p.criteria))
+            p_order.append((p.priority, p.name, p.section))
         p_order.sort(reverse=True)
         pprint(p_order)
 
-    def _add_non_cond_form_prop(self, p, triggers):
+    def _add_non_cond_form_prop(self, p, triggers, form_name):
         """
-        Add a non conditional property, endin in the form itself
+        Add a non conditional property, ending in the form itself
 
         p -- property definition
         triggers -- properties to be shown when this is selected
+        form_name -- form name to be used in the default page name fields
         """
+        if 'PAGENAME' in p.default:
+            # cases that link to a default new page
+            default = p.default % (form_name)
+        else:
+            default = p.default
         if p.ui_control and p.ui_control != 'checkbox':
             size = ''
             maxlength = ''
@@ -416,28 +475,34 @@ class SemanticBot(object):
                     maxlength = '|maxlength=%s' % value
             else:
                 ctype = p.ui_control
-            sd = {'name': p.name, 'tooltip': p.tooltip,
+            sd = {'label': p.label, 'name': p.name, 'tooltip': p.tooltip,
                   'ctrl': ctype, 'size': size, 'maxlength': maxlength,
                   'mandatory': p.mandatory, 'values_from': p.values_from,
-                  'default': p.default, 'triggers': triggers}
+                  'default': default, 'triggers': triggers}
             field_def = FORM_MULTIPLE % sd
         else:
-            sd = {'name': p.name, 'tooltip': p.tooltip,
+            sd = {'label': p.label, 'name': p.name, 'tooltip': p.tooltip,
                   'mandatory': p.mandatory, 'values_from':p.values_from,
-                  'triggers': triggers}
+                  'default': default, 'triggers': triggers}
             field_def = FORM_SINGLE % sd
         return field_def
 
-    def _add_cond_form_prop(self, p, triggers):
+    def _add_cond_form_prop(self, p, triggers, form_name):
         """
         Add a conditional property ending to a separate div
         NB! Tooltips don't work property inside the divs
 
         p -- property definition
         triggers -- properties to be shown when this is selected
+        form_name -- form name to be used in the default page name fields
         """
+        if 'PAGENAME' in p.default:
+            # cases that link to a default new page
+            default = p.default % (form_name)
+        else:
+            default = p.default
+        size = ''
         if p.ui_control and p.ui_control != 'checkbox':
-            size = ''
             maxlength = ''
             if ';' in p.ui_control:
                 ctype, value = p.ui_control.split(';')
@@ -447,15 +512,15 @@ class SemanticBot(object):
                     maxlength = '|maxlength=%s' % value
             else:
                 ctype = p.ui_control
-            sd = {'name': p.name,
+            sd = {'label': p.label, 'name': p.name,
                   'ctrl': ctype, 'size': size, 'maxlength': maxlength,
                   'mandatory': p.mandatory, 'values_from': p.values_from,
                   'default': p.default, 'triggers': triggers}
             field_def = FORM_DIV_MULTIPLE % sd
         else:
-            sd = {'name': p.name,
+            sd = {'label': p.label, 'name': p.name, 'size': size,
                   'mandatory': p.mandatory, 'values_from':p.values_from,
-                  'triggers': triggers}
+                  'default': default, 'triggers': triggers}
             field_def = FORM_DIV_SINGLE % sd
         sd = {'id': p.div_name, 'field': field_def}
         return sd
@@ -471,7 +536,7 @@ class SemanticBot(object):
         sd = {'form_name': form_name, 'name': f_def['templ_name'],
               'pre': f_def['pre'], 'category': category,
               'struct': f_def['templ_struct']}
-        template = TEMPLATE_TEMPL% sd
+        template = TEMPLATE_TEMPL % sd
         logging.info('Pushing template %s to wiki' % f_def['templ_name'])
         logging.info(template)
         logging.info('-' * 20)
@@ -509,15 +574,17 @@ class SemanticBot(object):
             triggers = self.trigger_properties.get(p.id, '')
             if triggers:
                 triggers = triggers[:-1]
-            if not p.div_name:
-                field_def = self._add_non_cond_form_prop(p, triggers)
-                form_p[-1][1]['f_struct'] = field_def
-            else:
-                sd = self._add_cond_form_prop(p, triggers)
+            my_trigger_exists = self._check4parent_prop(p, f_def['form_p'])
+            if my_trigger_exists:
+                sd = self._add_cond_form_prop(p, triggers, form_name)
                 form_p[-1][1]['divs'] = FORM_CONDITIONAL % sd
                 # tooltip to be placed outside the div
                 sd = {'name': p.name, 'tooltip': p.tooltip}
                 form_p[-1][1]['extra_tooltip'] = EXTRA_TOOLTIP % sd
+            else:
+                field_def = self._add_non_cond_form_prop(p, triggers,
+                                                         form_name)
+                form_p[-1][1]['f_struct'] = field_def
 
             # Template part
             form_p[-1][1]['pre'] = TEMPL_PRE % p.name
@@ -535,16 +602,28 @@ class SemanticBot(object):
             f_def['pre'] += p[1]['pre']
             f_def['templ_struct'] += p[1]['templ_struct']
 
+    def _check4parent_prop(self, prop, all_prop):
+        """
+        Checks whether the triggering property exists on the form for a
+        property that is potentially initially hidden
+        """
+        trigger_exists = False
+        for p in all_prop:
+            if p.id in prop.my_triggers:
+                trigger_exists = True
+                break
+        return trigger_exists
+
     def _collect_category_properties(self, form_name, f_def, category=None):
         """
-        Process properties for the given category ('Criteria' on sheet)
+        Process properties for the given category ('Title' on sheet)
         for inclusion in the form
 
         form_name -- the name of the form being created
         f_def -- form definition data
-        category -- category/criteria to get properties for
+        category -- category/section to get properties for
         """
-        if FORM_DEF[form_name]['multi-template']:
+        if self.form_def[form_name]['multi-template']:
             f_def['templ_struct'] = ''
             f_def['pre'] = ''
             f_def['templ_name'] = '%s, %s' % (form_name, category)
@@ -553,7 +632,7 @@ class SemanticBot(object):
             f_def['extra_tooltip'] = ''
             f_def['section_placed'] = False
         for p in f_def['form_p']:
-            if form_name not in p.target_forms or p.criteria != category:
+            if form_name not in p.target_forms or p.section != category:
                 continue
             if not f_def['section_placed']:
                 f_def['section_placed'] = True
@@ -561,15 +640,16 @@ class SemanticBot(object):
             triggers = self.trigger_properties.get(p.id, '')
             if triggers:
                 triggers = triggers[:-1]
-            if not p.div_name:
-                field_def = self._add_non_cond_form_prop(p, triggers)
-                f_def['f_struct'] += field_def
-            else:
-                sd = self._add_cond_form_prop(p, triggers)
+            my_trigger_exists = self._check4parent_prop(p, f_def['form_p'])
+            if my_trigger_exists:
+                sd = self._add_cond_form_prop(p, triggers, category)
                 f_def['divs'] += FORM_CONDITIONAL % sd
                 # tooltip to be placed outside the div
                 sd = {'name': p.name, 'tooltip': p.tooltip}
                 f_def['extra_tooltip'] += EXTRA_TOOLTIP % sd
+            else:
+                field_def = self._add_non_cond_form_prop(p, triggers, category)
+                f_def['f_struct'] += field_def
 
             # Template part
             f_def['pre'] += TEMPL_PRE % p.name
@@ -578,7 +658,7 @@ class SemanticBot(object):
             else:
                 f_def['templ_struct'] += TEMPL_MULTIPLE % {'name':p.name}
 
-    def _put2form_template(self, form_templates, category, f_def):
+    def _put2form_template(self, form_name, form_templates, category, f_def):
         """
         Process info from section properties and place it to the form
         template
@@ -607,10 +687,8 @@ class SemanticBot(object):
         cut_off -- cut off for property priority score for inclusion in the
                    form
         """
-        if not form_name in FORM_DEF:
-            msg = 'You must define the order in which differenct sections '\
-                  '(Criteria column on sheet) appear on the form, see '\
-                  'FORM_DEF in the script'
+        if not form_name in self.form_def:
+            msg = 'Form %s not in property sheet' % (form_name,)
             logging.error(msg)
             sys.exit(1)
         f_def = {'form_p': [],
@@ -623,24 +701,25 @@ class SemanticBot(object):
                  'extra_tooltip': '',
                 }
         for p in self.properties:
-            if p.priority >= cut_off:
+            if cut_off is None or p.priority >= cut_off:
                 f_def['form_p'].append(p)
-        f_def['form_p'].sort(key=lambda prop: (prop.criteria, prop.form_order))
+        f_def['form_p'].sort(key=lambda prop: (prop.section,
+                                               prop.dss_form_order))
         form_templates = ''
-        if FORM_DEF[form_name]['multi-template']:
-            for category in FORM_DEF[form_name]['content']:
+        if self.form_def[form_name]['multi-template']:
+            for category in self.form_def[form_name]['content']:
                 self._collect_category_properties(form_name, f_def, category)
                 # form has different sections, each having its own template
-                form_templates = self._put2form_template(form_templates,
-                                                         category, f_def)
+                form_templates = self._put2form_template(form_name,
+                                               form_templates, category, f_def)
         else:
             # the whole form in one template, the order of fields defined by
             # a column on the sheet
             self._collect_all_properties(form_name, f_def)
             f_def['templ_name'] = form_name
             category = form_name
-            form_templates = self._put2form_template(form_templates, category,
-                                                     f_def)
+            form_templates = self._put2form_template(form_name, form_templates,
+                                                     category, f_def)
 
         begin = FORM_BEGIN % {'form_name': form_name}
         form = begin + form_templates + FORM_END
@@ -652,7 +731,39 @@ class SemanticBot(object):
         summary = 'Definition of form derived from the FORSYS property sheet'
         page.save(form, summary=summary)
 
-def main(options, username, pwd, excel, action, form_name, cut_off):
+    def create_category_pages(self):
+        """
+        Create categories and pages belonging to them based on the propertys
+        sheet definitions
+        """
+        c_pages = defaultdict(str)
+        for cat, cdata in self.categories.iteritems():
+            #df = cdata['has def form']
+            #c_text = ''
+            #if df != '':
+            #    c_text = 'This category uses the form %s' % (df, )
+            #logging.info('Pushing category:')
+            #logging.info(cat)
+            #logging.info(c_text)
+            #logging.info('-' * 20)
+            #page = self.site.pages['Category:%s' % cat]
+            #summary = 'Definition of category from the WG1 property sheet'
+            #page.save(c_text, summary=summary)
+
+            for c_page in cdata['category pages']:
+                c_text = '[[Category:%s]]\n' % (cat, )
+                c_pages[c_page] += c_text
+        for c_page, c_text in c_pages.iteritems():
+            page = self.site.pages['%s' % c_page]
+            logging.info('Pushing category page:')
+            logging.info(c_page)
+            logging.info(c_text)
+            logging.info('-' * 20)
+            summary = ''
+            page.save(c_text, summary=summary)
+
+
+def main(options, username, pwd, excel, action, form_name):
     bot = SemanticBot(username, pwd, WIKI, API_PATH)
     bot.read_property_Excel(excel)
     if action == 'push_properties':
@@ -662,21 +773,26 @@ def main(options, username, pwd, excel, action, form_name, cut_off):
     elif action == 'list_priorities':
         bot.list_priorities()
     elif action == 'create_form':
-        bot.create_form(form_name, cut_off)
+        if form_name == u'all':
+            for fn in bot.form_def.keys():
+                bot.create_form(fn, options.cut_off)
+        else:
+            bot.create_form(form_name, options.cut_off)
+    elif action == 'create_categories':
+        bot.create_category_pages()
 
 if __name__ == '__main__':
     from optparse import OptionParser
     usage = "usage: %prog [options] username:password excel_file action\n"\
             "    excel_file -- FORSYS_WIKI_properties from Google Docs\n"\
             "    action -- push_properties, clean_properties, "\
-            "list_priorities, create_form\n"\
-            "    cut_off -- only for create_form: priority cut off score"
+            "list_priorities, create_form, create_categories\n"
     parser = OptionParser(usage)
     parser.add_option('-d', '--debug', dest='debug', action='store_true',
                       help='Run post mortem debug mode enabled')
-    #parser.add_option('-u', '--username', dest='username', action='store',
-    #                 help='Username used to connect to the database (will be'\
-    #                 ' asked for in the interactive console if not provided)')
+    parser.add_option('-c', '--cutoff', dest='cut_off', action='store',
+                  default=None,
+                  help='priority score cut off value when creating DSS form')
     options, args = parser.parse_args()
     if len(args) < 3:
         parser.error('Need to give username:password, Excel file and action')
@@ -688,19 +804,15 @@ if __name__ == '__main__':
     excel = args[1]
     action = args[2]
     form_name = None
-    cut_off = None
     if action == 'create_form':
         try:
-            form_name = args[3]
+            form_name = unicode(args[3], 'utf8')
+            form_name = form_name.replace(u'\xa0', ' ')
         except:
             parser.error('Give the form name when creating form')
-        try:
-            cut_off = float(args[4])
-        except:
-            parser.error('Give the cut off priority score when creating form')
     if not os.path.exists(excel):
         parser.error('The file %s does not exist' % excel)
     if action not in ACTIONS:
         parser.error('Action must be one of: %s' % ACTIONS)
 
-    main(options, username, pwd, excel, action, form_name, cut_off)
+    main(options, username, pwd, excel, action, form_name)
