@@ -221,8 +221,18 @@ class SemanticBot(object):
             values_from = '|values from category=%s' % (page_prop_category)
         elif page_prop_category_type == GENERAL_SUB_CATEGORY:
             values_from = '|values from category=%s' % (page_prop_category)
-            self.categories[page_prop_category]['category pages'] = \
+            try:
+                self.categories[page_prop_category]['category pages'] = \
                     [v.strip() for v in enum.split(';')]
+            except KeyError:
+                msg = "Property '%s': '%s' column has value '%s', but no "\
+                        "category given in column '%s'"\
+                        % (row_dict[NAME_HEADER],
+                           PAGE_PROPERTY_CATEGORY_TYPE_HEADER,
+                           GENERAL_SUB_CATEGORY,
+                           PAGE_PROPERTY_CATEGORY_HEADER)
+                print msg
+                sys.exit(1)
         elif enum.startswith('property:'):
             values_from = '|values from property=%s' % (enum.split(':')[1],)
         elif enum.startswith('category:'):
@@ -290,12 +300,6 @@ class SemanticBot(object):
                 name_error = True
             p_names.add(name)
             label = row_dict[LABEL_HEADER]
-
-            page_prop_category_type = \
-                row_dict[PAGE_PROPERTY_CATEGORY_TYPE_HEADER].lower()
-                
-            if page_prop_category_type == PAGE_SPECIFIC_SUB_CATEGORY:
-                label += " (name of the detail wiki page)"
 
             priority = row_dict[PRIORITY_HEADER]
             section = row_dict[SECTION_HEADER]
@@ -460,7 +464,7 @@ class SemanticBot(object):
         """
         if 'PAGENAME' in p.default:
             # cases that link to a default new page
-            default = p.default % (page_prop_category)
+            default = p.default % (p.label)
         else:
             default = p.default
         if p.ui_control and p.ui_control != 'checkbox':
@@ -497,7 +501,7 @@ class SemanticBot(object):
         """
         if 'PAGENAME' in p.default:
             # cases that link to a default new page
-            default = p.default % (page_prop_category)
+            default = p.default % (p.label)
         else:
             default = p.default
         size = ''
