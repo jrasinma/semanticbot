@@ -472,7 +472,7 @@ class SemanticBot(object):
         if 'PAGENAME' in p.default:
             # cases that link to a default new page
             if LABEL_ADDITION4PAGE_LINK in p.label:
-                last_part = p.label.strip(LABEL_ADDITION4PAGE_LINK)
+                last_part = p.label.replace(LABEL_ADDITION4PAGE_LINK, '')
             else:
                 last_part = p.label
             default = p.default % (last_part, )
