@@ -39,6 +39,7 @@ PAGE_PROPERTY_CATEGORY_HEADER = u'Related category for property'
 PAGE_PROPERTY_CATEGORY_TYPE_HEADER = u'Type of related category'
 PAGE_SPECIFIC_SUB_CATEGORY = u'specific'
 GENERAL_SUB_CATEGORY = u'general'
+LABEL_ADDITION4PAGE_LINK = " (name of the detail wiki page)"
 
 # In which order are the properties place on the form from the different
 # 'Title' sections on the 'forsys_semanticwiki_properties' sheet
@@ -305,7 +306,7 @@ class SemanticBot(object):
                 row_dict[PAGE_PROPERTY_CATEGORY_TYPE_HEADER].lower()
 
             if page_prop_category_type == PAGE_SPECIFIC_SUB_CATEGORY:
-                label += " (name of the detail wiki page)"
+                label += LABEL_ADDITION4PAGE_LINK
 
             priority = row_dict[PRIORITY_HEADER]
             section = row_dict[SECTION_HEADER]
@@ -470,7 +471,11 @@ class SemanticBot(object):
         """
         if 'PAGENAME' in p.default:
             # cases that link to a default new page
-            default = p.default % (p.label)
+            if LABEL_ADDITION4PAGE_LINK in p.label:
+                last_part = p.label.strip(LABEL_ADDITION4PAGE_LINK)
+            else:
+                last_part = p.label
+            default = p.default % (last_part, )
         else:
             default = p.default
         if p.ui_control and p.ui_control != 'checkbox':
