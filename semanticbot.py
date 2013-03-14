@@ -768,6 +768,8 @@ class SemanticBot(object):
                 c_text = '[[Category:%s]]\n' % (cat, )
                 c_pages[c_page] += c_text
         for c_page, c_text in c_pages.iteritems():
+            if c_page == '':
+                continue
             page = self.site.pages['%s' % c_page]
             logging.info('Pushing category page:')
             logging.info(c_page)
