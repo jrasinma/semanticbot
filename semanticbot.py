@@ -13,8 +13,8 @@ FORMAT = '%(asctime)-15s %(message)s'
 logging.basicConfig(level=logging.INFO, format=FORMAT)
 
 # configuration parameters, check hostname!
-#WIKI = 'fp0804.emu.ee'
-WIKI = 'test.forsys.siwawa.org'
+WIKI = 'fp0804.emu.ee'
+#WIKI = 'test.forsys.siwawa.org'
 API_PATH = '/wiki/'
 ACTIONS = ['push_properties', 'clean_properties', 'list_priorities',
            'create_form', 'create_categories']
@@ -72,7 +72,7 @@ FORM_DEF = \
                 ),
               'category with form': True,
            },
-    u'Case study': {'multi-template': False,
+    u'Case': {'multi-template': False,
                    'form order': 'FormCase',
                    'category with form': True,
                  },
@@ -96,6 +96,7 @@ TEMPLATE_TEMPL = \
 '{| class="wikitable dsstable"\n'\
 '%(struct)s'\
 '|}\n\n'\
+'%(query)s\n'\
 '[[Category:%(form_name)s]]\n'\
 '</includeonly>\n'
 
@@ -106,6 +107,11 @@ TEMPL_SINGLE = '! %(name)s\n'\
 TEMPL_MULTIPLE = '! %(name)s\n'\
                  '| {{#arraymap:{{{%(name)s|}}}|,|@@@@|[[%(name)s::@@@@]]}}\n'\
                  '|-\n'
+
+TEMPL_QUERY = '{{#ask: [[Category:%(target_forms)s]] [[%(prop)s::{{PAGENAME}}]]\n'\
+              '| intro=*has related %(target_forms)s: '\
+              '| format=url'\
+              '}}\n'
 
 FORM_BEGIN = \
 '<noinclude>\n'\
@@ -272,7 +278,7 @@ class SemanticBot(object):
                               'target_forms id label name definition meta '\
                               'tooltip order priority section ui_control '\
                               'dss_form_order multiplicity mandatory '\
-                              'default div_name my_triggers values_from')
+                              'default div_name my_triggers values_from specific_category related_category')
         name_error = False
         for rownum in range(1, sh.nrows):
             vals = sh.row_values(rownum)
@@ -302,11 +308,15 @@ class SemanticBot(object):
             p_names.add(name)
             label = row_dict[LABEL_HEADER]
 
+            related_category = \
+                row_dict[PAGE_PROPERTY_CATEGORY_HEADER]
             page_prop_category_type = \
                 row_dict[PAGE_PROPERTY_CATEGORY_TYPE_HEADER].lower()
 
+            specific_category = False
             if page_prop_category_type == PAGE_SPECIFIC_SUB_CATEGORY:
                 label += LABEL_ADDITION4PAGE_LINK
+                specific_category = True
 
             priority = row_dict[PRIORITY_HEADER]
             section = row_dict[SECTION_HEADER]
@@ -378,7 +388,9 @@ class SemanticBot(object):
                                   default=default,
                                   div_name=div_name,
                                   my_triggers=my_triggers,
-                                  values_from=values_from))
+                                  values_from=values_from,
+                                  specific_category=specific_category,
+                                  related_category=related_category))
         self.properties = props
         self.trigger_properties = trigger_p
 
@@ -547,9 +559,15 @@ class SemanticBot(object):
         category -- category the template is for
         f_def -- form definition data for the category
         """
+        query = ''
+        for p in self.properties:
+            if p.specific_category == True and p.related_category == category:
+                for f in p.target_forms:
+                    query += TEMPL_QUERY % {'target_forms':f, 'prop':p.name}
+        query += '\n'
         sd = {'form_name': form_name, 'name': f_def['templ_name'],
               'pre': f_def['pre'], 'category': category,
-              'struct': f_def['templ_struct']}
+              'struct': f_def['templ_struct'], 'query': query}
         template = TEMPLATE_TEMPL % sd
         logging.info('Pushing template %s to wiki' % f_def['templ_name'])
         logging.info(template)
@@ -748,7 +766,7 @@ class SemanticBot(object):
     def create_category_pages(self):
         """
         Create categories and pages belonging to them based on the propertys
-        sheet definitions
+        sheet definitions. If page already exists, do nothing.
         """
         c_pages = defaultdict(str)
         for cat, cdata in self.categories.iteritems():
@@ -769,13 +787,17 @@ class SemanticBot(object):
                 c_pages[c_page] += c_text
         for c_page, c_text in c_pages.iteritems():
             page = self.site.pages['%s' % c_page]
-            logging.info('Pushing category page:')
-            logging.info(c_page)
-            logging.info(c_text)
-            logging.info('-' * 20)
             summary = ''
-            page.save(c_text, summary=summary)
-
+            current_text = page.edit()
+            if (len(current_text) == 0 ):
+                logging.info('Pushing category page:')
+                logging.info(c_page)
+                logging.info(c_text)
+                logging.info('-' * 20)
+                page.save(c_text, summary=summary)
+            else:
+                logging.info('Category page already exists: (%s - %s)' % (c_page, c_text))
+                logging.info('-' * 20)
 
 def main(options, username, pwd, excel, action, form_name):
     bot = SemanticBot(username, pwd, WIKI, API_PATH)
