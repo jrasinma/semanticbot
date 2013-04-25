@@ -13,8 +13,8 @@ FORMAT = '%(asctime)-15s %(message)s'
 logging.basicConfig(level=logging.INFO, format=FORMAT)
 
 # configuration parameters, check hostname!
-#WIKI = 'fp0804.emu.ee'
-WIKI = 'test.forsys.siwawa.org'
+WIKI = 'fp0804.emu.ee'
+#WIKI = 'test.forsys.siwawa.org'
 API_PATH = '/wiki/'
 ACTIONS = ['create_pages', ]
 
@@ -26,6 +26,16 @@ KM_PROCESS_SHEET = 'CountryProblemType_KMProcess'
 KM_TECHNIQUE_SHEET = 'CountryProblemType_KMTech'
 PP_TECHNIQUE_SHEET = 'CountryProblemType_PPTech'
 PP_TASK_SHEET = 'CountryProblemType_PPTasks'
+
+PAGE_TYPE_PROPERTIES = (u'TempScale', u'SpatContext', u'SpatScale',
+                        u'Objective', u'Goods&Services', u'PartInvolved',
+                        u'Country', u'Simulation', u'Ecological',
+                        u'social model', u'MCDM', u'Optimisation',
+                        u'uncertainty evaluation', u'Other',
+                        u'KM Process', u'identify', u'transfer', u'analyse',
+                        u'Integrated KM techniques to unspecificed process',
+                        u'Participatory Planning Tasks',
+                        u'Participatory Planning Techniques')
 
 MAIN_TEMPL = \
 '{{Forest planning problem type\n'\
@@ -218,9 +228,17 @@ class SemanticPageBot(object):
                 try:
                     new_vals = val.split(';')
                     if len(new_vals) > 1:
-                        new_val = ','.join([v.strip() for v in new_vals \
-                                           if v not in ('', ' ', '  ', '   ')])
+                        new_vals = [v.strip() for v in new_vals \
+                                    if v not in ('', ' ', '  ', '   ')]
+                        if key in PAGE_TYPE_PROPERTIES:
+                            for ind in range(len(new_vals)):
+                                new_vals[ind] = (new_vals[ind][0].upper() +
+                                                 new_vals[ind][1:])
+                        new_val = ','.join(new_vals)
                         row_dict[key] = new_val
+                    elif key in PAGE_TYPE_PROPERTIES:
+                        v = row_dict[key]
+                        row_dict[key] = v[0].upper() + v[1:]
                 except:
                     pass
             key = (row_dict['Country'], row_dict['ProbType'])
@@ -240,6 +258,10 @@ class SemanticPageBot(object):
             row_dict = dict(zip(headers, vals))
             if 'ProbType' in row_dict:
                 row_dict['ProbType'] = int(row_dict['ProbType'])
+            for key in row_dict:
+                if key in PAGE_TYPE_PROPERTIES:
+                    v = row_dict[key]
+                    row_dict[key] = v[0].upper() + v[1:]
             key = (row_dict['Country'], row_dict['ProbType'])
             other_data[key] = row_dict
         return other_data
@@ -268,7 +290,10 @@ class SemanticPageBot(object):
             grouper = row_dict[g_key]
             if data[key][grouper] == '':
                 data[key][grouper] = []
-            data[key][grouper].append(row_dict[v_key])
+            prop_value = row_dict[v_key]
+            if grouper in PAGE_TYPE_PROPERTIES:
+                prop_value = prop_value[0].upper() + prop_value[1:]
+            data[key][grouper].append(prop_value)
 
 
 def main(options, username, pwd, excel, action):
